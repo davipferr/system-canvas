@@ -8,12 +8,14 @@ import {
   type AlertState,
   type Design,
   type MetricPoint,
+  type SimulationResult,
   type Slo,
   type TrafficPattern,
 } from 'system-canvas'
 import { AlertsPanel } from './AlertsPanel'
 import { formatMs, formatRps } from './LoadStats'
 import { TimeChart, type Marker } from './TimeChart'
+import { TracesPanel } from './TracesPanel'
 import { CLOCK_SPEEDS, type Clock } from './useClock'
 
 export type TimelineEvent = Marker
@@ -36,6 +38,11 @@ export function Dashboard({
   onResetRules,
   alertStates,
   incidents,
+  traffic,
+  sim,
+  onSelectNode,
+  onStartGame,
+  gameRunning,
 }: {
   design: Design
   metrics: MetricPoint[]
@@ -51,10 +58,16 @@ export function Dashboard({
   onResetRules: () => void
   alertStates: AlertState[]
   incidents: AlertIncident[]
+  /** The design traffic actually flows through (a challenge's traffic applied), for traces. */
+  traffic: Design
+  sim: SimulationResult
+  onSelectNode: (id: string) => void
+  onStartGame: () => void
+  gameRunning: boolean
 }) {
   const [open, setOpen] = useState(true)
   const [hover, setHover] = useState<number | null>(null)
-  const [tab, setTab] = useState<'charts' | 'alerts'>('charts')
+  const [tab, setTab] = useState<'charts' | 'alerts' | 'traces'>('charts')
   const times = metrics.map((p) => p.t)
   // Pages show up on the charts next to failures and pattern changes.
   const pageMarkers: TimelineEvent[] = incidents
@@ -81,6 +94,9 @@ export function Dashboard({
           <button role="tab" aria-selected={tab === 'alerts'} onClick={() => setTab('alerts')}>
             Alerts
             {firing.length > 0 && <span className={paging ? 'alert-count page' : 'alert-count'}>{firing.length}</span>}
+          </button>
+          <button role="tab" aria-selected={tab === 'traces'} onClick={() => setTab('traces')}>
+            Traces
           </button>
         </div>
         <span className="dash-clock" title="Simulated time">
@@ -117,8 +133,17 @@ export function Dashboard({
           <button onClick={onReset} title="Clear the charts and go back to 08:00">
             Reset
           </button>
+          <button
+            onClick={onStartGame}
+            disabled={gameRunning}
+            title="A hidden fault will hit your design: find it and fix it (1 min/s recommended)"
+          >
+            🎲 {gameRunning ? 'Game day running' : 'Game day'}
+          </button>
         </div>
       </header>
+
+      {open && tab === 'traces' && <TracesPanel design={traffic} sim={sim} onSelectNode={onSelectNode} />}
 
       {open && tab === 'alerts' && (
         <AlertsPanel

@@ -37,7 +37,7 @@ export interface RequestSample {
 export const P99_FACTOR = Math.log(100)
 
 /** Small, fast, seeded PRNG (mulberry32): same seed, same sequence. */
-function random(seed: number): () => number {
+export function seededRandom(seed: number): () => number {
   let a = seed >>> 0
   return () => {
     a = (a + 0x6d2b79f5) >>> 0
@@ -54,7 +54,7 @@ export function sampleRequests(
   options: { count?: number; seed?: number } = {},
 ): RequestSample {
   const count = options.count ?? 20_000
-  const rand = random(options.seed ?? 42)
+  const rand = seededRandom(options.seed ?? 42)
   const byId = new Map(design.nodes.map((n) => [n.id, n]))
   const outs = new Map<string, DesignEdge[]>(design.nodes.map((n) => [n.id, []]))
   for (const edge of design.edges) {

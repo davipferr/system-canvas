@@ -2,9 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   addNode,
   analyzeAvailability,
+  applyFault,
   applyTraffic,
   breakingPoint,
+  CLOCK_START,
   commitFrom,
+  FAULT_TYPES,
   createDesign,
   createHistory,
   DEFAULT_ALERT_RULES,
@@ -17,8 +20,10 @@ import {
   getNode,
   isSingleInstance,
   metricPoint,
+  pickFault,
   preview,
   push,
+  recoveredAt,
   redo,
   removeNode,
   renameDesign,
@@ -32,6 +37,7 @@ import {
   undo,
   type ComponentKind,
   type Design,
+  type FaultType,
   type MetricPoint,
 } from 'system-canvas'
 import type { FailureState } from './AvailabilityStats'
@@ -39,6 +45,8 @@ import { ChallengePanel } from './ChallengePanel'
 import { challenges, type Challenge } from './challenges'
 import { Dashboard, type TimelineEvent } from './Dashboard'
 import { Estimator } from './Estimator'
+import { IncidentPanel, Postmortem } from './GameDay'
+import { isFaultActive, isOver, type GameState } from './gameState'
 import { Library } from './Library'
 import type { Template } from './templates'
 import { Canvas, GRID, NODE_H, NODE_W, snap, type CanvasHandle, type Editor } from './Canvas'
@@ -121,17 +129,27 @@ export function App() {
     [design, challenge],
   )
 
+  // Game day: while its hidden fault is active it reshapes what the simulation sees (slower,
+  // smaller, crashed, more traffic), but never the design you edit or the canvas's DOWN markers.
+  const [game, setGame] = useState<GameState | null>(null)
+  const [postmortemOpen, setPostmortemOpen] = useState(false)
+  const faultOn = isFaultActive(game, clock.t)
+  const hit = useMemo(() => (faultOn && game ? applyFault(effective, game.fault) : null), [faultOn, game?.fault, effective])
+  const traffic = hit?.design ?? effective
+  const simFailed = useMemo(() => (hit?.failed.length ? new Set([...failed, ...hit.failed]) : failed), [hit, failed])
+  const load = factor * (hit?.trafficMultiplier ?? 1)
+
   const sim = useMemo(
-    () => simulate(factor === 1 ? effective : scaleTraffic(effective, factor), { failed }),
-    [effective, factor, failed],
+    () => simulate(load === 1 ? traffic : scaleTraffic(traffic, load), { failed: simFailed }),
+    [traffic, load, simFailed],
   )
   const breaking = useMemo(() => breakingPoint(effective), [effective])
-  const availability = useMemo(() => analyzeAvailability(effective, { failed }), [effective, failed])
+  const availability = useMemo(() => analyzeAvailability(traffic, { failed: simFailed }), [traffic, simFailed])
 
   // SRE view: follow sample requests through the live simulation for percentiles and error rate,
   // and compare them (and the hardware-only availability) with the design's SLOs.
   const slo = design.slo ?? DEFAULT_SLO
-  const sample = useMemo(() => sampleRequests(effective, sim), [effective, sim])
+  const sample = useMemo(() => sampleRequests(traffic, sim), [traffic, sim])
   const baseline = useMemo(() => analyzeAvailability(effective).system, [effective])
   const sloReport = useMemo(() => evaluateSlo(slo, baseline, sample), [slo, baseline, sample])
   const impact = useMemo(() => failureImpact(effective, failed), [effective, failed])
@@ -153,7 +171,7 @@ export function App() {
   // Record what a monitoring system would scrape, once per clock tick.
   useEffect(() => {
     if (!simulating) return
-    const point = metricPoint(clock.t, factor, sim, sample, sloReport.errorBudget, slo.latencyPercentile)
+    const point = metricPoint(clock.t, load, sim, sample, sloReport.errorBudget, slo.latencyPercentile)
     setMetrics((list) => [...list.filter((p) => p.t < clock.t), point].slice(-MAX_POINTS))
   }, [clock.t, simulating])
 
@@ -177,7 +195,77 @@ export function App() {
     setMetrics([])
     setEvents([])
     paged.current.clear()
+    setGame(null)
   }
+
+  /** Reveal the fault on the charts once the game is over. */
+  const revealFault = (g: GameState) => {
+    const where = g.fault.target ? (getNode(design, g.fault.target)?.label ?? '') : 'traffic'
+    setEvents((list) => [...list, { t: g.faultAt, label: `Fault: ${FAULT_TYPES[g.fault.type].label} on ${where}`, kind: 'fail' }])
+  }
+
+  const startGame = () => {
+    const loaded = scaleTraffic(effective, loadFactor * clock.multiplier)
+    const fault = pickFault(loaded, slo, Math.floor(Math.random() * 1e9), failed)
+    if (!fault) {
+      setNotice('Your design shrugged off every fault we tried. Raise the load or remove some redundancy, then try again.')
+      return
+    }
+    resetTimeline()
+    setSimulating(true)
+    setPostmortemOpen(false)
+    // The fault lands 5–15 minutes in, so you cannot just watch the clock.
+    setGame({
+      fault,
+      startedAt: CLOCK_START,
+      faultAt: CLOCK_START + 5 + Math.floor(Math.random() * 11),
+      guesses: [],
+      diagnosedAt: null,
+      remedyAt: null,
+      recoveredAt: null,
+      gaveUp: false,
+    })
+    setNotice('Game day: something is about to break. Watch the dashboard.')
+  }
+
+  const guess = (target: string | null, type: FaultType) => {
+    if (!game) return
+    const t = clock.t
+    const correct = t >= game.faultAt && type === game.fault.type && target === game.fault.target
+    setGame({ ...game, guesses: [...game.guesses, { t, target, type, correct }], diagnosedAt: correct ? t : null })
+    setNotice(
+      correct
+        ? 'Correct diagnosis. Now fix it.'
+        : t < game.faultAt
+          ? 'False alarm: nothing was broken yet (+5 min).'
+          : 'Not quite (+5 min). Keep looking.',
+    )
+  }
+
+  const applyRemedy = () => {
+    if (!game) return
+    setGame({ ...game, remedyAt: clock.t })
+    setNotice(`${FAULT_TYPES[game.fault.type].remedy}: rolling out.`)
+  }
+
+  const giveUp = () => {
+    if (!game) return
+    const over = { ...game, gaveUp: true }
+    setGame(over)
+    revealFault(over)
+    setPostmortemOpen(true)
+  }
+
+  // The incident is over once the SLOs have held for a few minutes after it broke them.
+  useEffect(() => {
+    if (!game || isOver(game) || clock.t < game.faultAt) return
+    const at = recoveredAt(metrics, game.faultAt, slo)
+    if (at === null) return
+    const over = { ...game, recoveredAt: at }
+    setGame(over)
+    revealFault(over)
+    setPostmortemOpen(true)
+  }, [metrics])
 
   const editor = useMemo<Editor>(
     () => ({
@@ -463,6 +551,17 @@ export function App() {
                     onLeave={() => setChallengeId(null)}
                   />
                 )}
+                {game && !isOver(game) && (
+                  <IncidentPanel
+                    key={game.faultAt}
+                    game={game}
+                    now={clock.t}
+                    design={design}
+                    onGuess={guess}
+                    onRemedy={applyRemedy}
+                    onGiveUp={giveUp}
+                  />
+                )}
                 {simulating && (
                   <MetricsPanel
                     design={design}
@@ -473,7 +572,7 @@ export function App() {
                     availability={availability.system}
                     spofCount={spofs.length}
                     sloReport={sloReport}
-                    trafficFactor={factor}
+                    trafficFactor={load}
                   />
                 )}
               </>
@@ -498,6 +597,11 @@ export function App() {
               onResetRules={() => setRules(DEFAULT_ALERT_RULES)}
               alertStates={alerts.states}
               incidents={alerts.incidents}
+              traffic={traffic}
+              sim={sim}
+              onStartGame={startGame}
+              gameRunning={game !== null && !isOver(game)}
+              onSelectNode={(id) => setSelection({ type: 'node', id })}
             />
           )}
         </div>
@@ -519,6 +623,17 @@ export function App() {
           }
         />
       </div>
+      <Postmortem
+        open={postmortemOpen}
+        onClose={() => setPostmortemOpen(false)}
+        onPlayAgain={startGame}
+        game={game}
+        design={design}
+        metrics={metrics}
+        incidents={alerts.incidents}
+        rules={rules}
+        slo={slo}
+      />
       <Estimator open={estimatorOpen} onClose={() => setEstimatorOpen(false)} onApply={applyEstimate} />
       <Library
         open={libraryOpen}

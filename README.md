@@ -17,7 +17,9 @@ It has no backend: everything runs in the browser, and your work is saved there.
    of failure.
 4. **Play the Challenges.** Each one starts broken, and its goals are checked live. Hints and a
    reference solution are there when you are stuck.
-5. **Design your own.** Start with **Estimate** (users → requests per second, storage and
+5. **Run a game day.** Let the site break your design in secret and see how quickly you can find
+   and fix it with your dashboards, alerts and traces.
+6. **Design your own.** Start with **Estimate** (users → requests per second, storage and
    bandwidth), put the peak traffic on the canvas, and build until it holds. Keep your reasoning
    in the design's **Notes**, and **Export** it as JSON, SVG or PNG.
 
@@ -55,6 +57,18 @@ It has no backend: everything runs in the browser, and your work is saved there.
   budget burning fast (page) or slowly (ticket), latency over the SLO (page), a component running
   hot, a queue falling behind, a component down (tickets). Turn rules on and off, tune their
   thresholds and durations, and read the incident log. A page interrupts you with a toast.
+- The **Traces** tab shows one request as a waterfall of spans: a read or a write, picked as a
+  typical (p50), slow (p99), failing or random example. Bars nest by call, the darker part is a
+  component's own work, async spans are dashed and run past the "response sent" line, and failed
+  spans are red all the way up to the user. "Where the time went" ranks the components by their
+  share of the user's wait. Click a span to select that component.
+- **🎲 Game day** (dashboard header): a hidden fault hits your design a few minutes in. A component
+  crashes, gets 8× slower or loses 70% of its capacity, a cache is flushed, or traffic triples, picked
+  at random from the faults that would really break your SLOs. Find it with the dashboard, alerts and
+  traces, then name it in the incident panel (each wrong guess adds 5 minutes). A correct diagnosis
+  unlocks the remedy (restart, roll back, warm the cache, rate-limit), or you can fix it by changing
+  the design. Once the SLOs have held for 5 minutes, a **postmortem** shows the timeline, time to
+  detect, time to recover, when your alerts paged, and how much of the month's error budget it used.
 
 **Failures and availability**
 
@@ -196,6 +210,36 @@ way Prometheus does:
 
 Tuned rules are saved in this browser.
 
+### Tracing
+
+`generateTrace(design, sim)` follows one request and records a span per component it touches:
+start time, duration (including the calls it waited for) and self time (its own work). It uses the
+same rules and random waits as the percentile sampler, so traces are concrete examples of the
+requests behind the percentiles, and a test checks that they average to the traffic model's
+response time.
+
+- A component does its own work, then calls its dependencies one after another.
+- Async calls (a queue's consumers, connections labelled `async` or `events`) start a separate
+  span that runs on after the response. Their failures never reach the user.
+- A component that is down or dropping requests fails its span and every caller waiting on it.
+  The remaining calls never happen.
+
+`pickTrace` generates 200 traces and returns an **exemplar**: the median, the p99 or a failing one.
+That's how teams go from "p99 is high" on a dashboard to the request that shows why.
+`timeBreakdown` splits the user's wait by component.
+
+### Game day
+
+`pickFault(design, slo, seed)` lists every fault that fits the design (`faultCandidates`), measures
+what each would do (`faultHarm`: burn rate and latency against the SLO), and picks one at random
+among those that would visibly break the SLOs. A fault nobody could see would make a dull drill.
+`applyFault` returns the design as the fault leaves it. The site simulates that version, while the
+canvas and inspector keep showing the design as you built it, so only the symptoms give it away.
+
+The incident is over at the start of the first 5-minute run of healthy points (`recoveredAt`) after
+the system was first seen unhealthy. `budgetUsed` adds up the failed requests in between. Each
+sample holds its value until the next, as scraped metrics do.
+
 ### Estimation and cost
 
 `estimate(input)` is the classic back-of-the-envelope calculation:
@@ -232,6 +276,8 @@ These are good next questions to ask about any design the simulator says is fine
 | [`src/sre.ts`](src/sre.ts) | Sampled requests (percentiles, error rates), SLOs and error budgets |
 | [`src/timeline.ts`](src/timeline.ts) | Traffic patterns, the simulated clock, and the metric points the dashboard plots |
 | [`src/alerts.ts`](src/alerts.ts) | Alert rules and their evaluation over time (pending, firing, resolved) |
+| [`src/tracing.ts`](src/tracing.ts) | Distributed traces: spans, exemplar picking, where the time went |
+| [`src/gameday.ts`](src/gameday.ts) | Game day faults, harm check, recovery detection and incident scoring |
 | [`src/cost.ts`](src/cost.ts), [`src/goals.ts`](src/goals.ts) | Monthly cost, and the goal checker behind the challenges |
 | [`playground/`](playground) | The site: React + SVG |
 | [`playground/templates.ts`](playground/templates.ts), [`playground/challenges.ts`](playground/challenges.ts) | Built-in learning content |

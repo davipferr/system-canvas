@@ -97,6 +97,7 @@ export {
   P99_FACTOR,
   percentileOf,
   sampleRequests,
+  seededRandom,
   SLO_PERCENTILES,
   SLO_WINDOW_DAYS,
   type RequestSample,
@@ -126,3 +127,23 @@ export {
   type AlertState,
   type AlertStatus,
 } from './alerts'
+
+export { generateTrace, pickTrace, timeBreakdown, type Span, type Trace, type TracePick } from './tracing'
+
+export {
+  applyFault,
+  budgetUsed,
+  FAULT_TYPES,
+  faultCandidates,
+  faultHarm,
+  impactStartedAt,
+  isHealthy,
+  pickFault,
+  RECOVERY_HOLD_MINUTES,
+  recoveredAt,
+  recoveryGrade,
+  REMEDY_MINUTES,
+  WRONG_GUESS_PENALTY,
+  type Fault,
+  type FaultType,
+} from './gameday'

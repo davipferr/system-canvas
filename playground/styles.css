@@ -1729,3 +1729,247 @@ select {
 .incidents li.open b {
   color: var(--bad);
 }
+
+/* ---- Traces --------------------------------------------------------- */
+
+.traces {
+  display: grid;
+  gap: 10px;
+}
+.trace-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.trace-controls > button {
+  font-size: 13px;
+  padding: 2px 10px;
+}
+.trace-controls .tabs button {
+  font-size: 13px;
+  padding: 2px 10px;
+}
+.trace-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  font-size: 13.5px;
+}
+.mono {
+  font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--muted);
+}
+.trace-status {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.trace-status.ok {
+  color: var(--ok);
+  border: 1px solid var(--ok);
+}
+.trace-status.error {
+  color: var(--bad);
+  border: 1px solid var(--bad);
+}
+
+.waterfall {
+  display: grid;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.wf-axis {
+  position: relative;
+  height: 16px;
+  margin-left: calc(210px + 8px);
+  margin-right: 86px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.wf-axis span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.wf-axis span:first-child {
+  transform: none;
+}
+.wf-axis span:last-child {
+  transform: translateX(-100%);
+}
+.wf-row {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr) 78px;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.wf-row:hover {
+  background: var(--chip);
+}
+.wf-name {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.wf-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wf-name .muted {
+  font-size: 11px;
+}
+.wf-track {
+  position: relative;
+  height: 14px;
+}
+.wf-response {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  border-left: 1px dashed var(--muted);
+}
+.wf-bar {
+  position: absolute;
+  top: 1px;
+  height: 12px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--cat, var(--accent)) 35%, transparent);
+  overflow: hidden;
+}
+.wf-self {
+  height: 100%;
+  background: var(--cat, var(--accent));
+}
+.wf-row.async .wf-bar {
+  background: transparent;
+  outline: 1.5px dashed var(--cat, var(--accent));
+  outline-offset: -1.5px;
+}
+.wf-row.async .wf-self {
+  opacity: 0.45;
+}
+.wf-row.error .wf-bar {
+  background: var(--bad);
+  outline: none;
+}
+.wf-row.error .wf-label,
+.wf-row.error .wf-time {
+  color: var(--bad);
+}
+.wf-time {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.breakdown {
+  display: grid;
+  gap: 4px;
+}
+.breakdown-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) 110px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.breakdown-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--chip);
+  overflow: hidden;
+}
+.breakdown-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+}
+
+@media (max-width: 600px) {
+  .wf-row {
+    grid-template-columns: 110px minmax(0, 1fr) 64px;
+  }
+  .wf-axis {
+    margin-left: calc(110px + 8px);
+    margin-right: 72px;
+  }
+  .wf-name .muted {
+    display: none;
+  }
+  .breakdown-row {
+    grid-template-columns: 90px minmax(0, 1fr) 90px;
+  }
+}
+
+/* ---- Game day ------------------------------------------------------- */
+
+.incident {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 300px;
+  max-width: calc(100% - 24px);
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--warn);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.15);
+  font-size: 14px;
+}
+.incident header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+.incident header .muted {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.diagnose {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.diagnose select {
+  min-width: 0;
+}
+.diagnose button {
+  grid-column: 1 / -1;
+}
+.ok-text {
+  color: var(--ok);
+}
+.postmortem-scores {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.postmortem-timeline {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+  font-size: 13.5px;
+}
+.postmortem-lessons {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
