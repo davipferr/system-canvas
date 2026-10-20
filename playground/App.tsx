@@ -7,28 +7,37 @@ import {
   commitFrom,
   createDesign,
   createHistory,
+  DEFAULT_ALERT_RULES,
+  DEFAULT_SLO,
   disconnect,
+  evaluateAlerts,
   evaluateGoals,
+  evaluateSlo,
   failureImpact,
   getNode,
   isSingleInstance,
+  metricPoint,
   preview,
   push,
   redo,
   removeNode,
   renameDesign,
+  sampleRequests,
   scaleTraffic,
   setParam,
   settle,
   simulate,
   SPOF_THRESHOLD,
+  TRAFFIC_PATTERNS,
   undo,
   type ComponentKind,
   type Design,
+  type MetricPoint,
 } from 'system-canvas'
 import type { FailureState } from './AvailabilityStats'
 import { ChallengePanel } from './ChallengePanel'
 import { challenges, type Challenge } from './challenges'
+import { Dashboard, type TimelineEvent } from './Dashboard'
 import { Estimator } from './Estimator'
 import { Library } from './Library'
 import type { Template } from './templates'
@@ -38,19 +47,25 @@ import { MetricsPanel } from './MetricsPanel'
 import { Palette } from './Palette'
 import { sampleDesign } from './sample'
 import { liveSelection, type Selection } from './selection'
+import { useClock } from './useClock'
 import { canvasToSvg, svgToPng } from './exportImage'
 import {
   downloadBlob,
   downloadDesign,
   fileName,
+  loadAlertRules,
   loadChallengeId,
   loadCompleted,
   loadSaved,
   readDesignFile,
   save,
+  saveAlertRules,
   saveChallengeId,
   saveCompleted,
 } from './storage'
+
+/** Points kept per chart: an hour at 1 min/s, two and a half days at 1 h/s. */
+const MAX_POINTS = 240
 
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
@@ -69,7 +84,14 @@ export function App() {
   // Simulate mode: heat and flowing requests on the canvas, plus a load multiplier to stress-test.
   const [simulating, setSimulating] = useState(false)
   const [loadFactor, setLoadFactor] = useState(1)
-  const factor = simulating ? loadFactor : 1
+  // While simulating, a clock runs and its traffic pattern scales the load over time.
+  const clock = useClock(simulating)
+  const factor = simulating ? loadFactor * clock.multiplier : 1
+  const [metrics, setMetrics] = useState<MetricPoint[]>([])
+  const [events, setEvents] = useState<TimelineEvent[]>([])
+  const mark = (label: string, kind: TimelineEvent['kind']) => {
+    if (simulating) setEvents((list) => [...list, { t: clock.t, label, kind }].slice(-50))
+  }
 
   // Failure injection: components switched off by the user. Not part of the design (or undo),
   // just a what-if; ids of deleted components drop out on their own.
@@ -78,8 +100,11 @@ export function App() {
     () => new Set(failedIds.filter((id) => getNode(design, id))),
     [failedIds, design],
   )
-  const toggleFailed = (id: string) =>
+  const toggleFailed = (id: string) => {
+    const name = getNode(design, id)?.label ?? id
+    mark(failedIds.includes(id) ? `${name} restored` : `${name} down`, failedIds.includes(id) ? 'recover' : 'fail')
     setFailedIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]))
+  }
 
   // Challenges: the active one fixes the traffic every number below is computed with.
   const [libraryOpen, setLibraryOpen] = useState(false)
@@ -102,6 +127,13 @@ export function App() {
   )
   const breaking = useMemo(() => breakingPoint(effective), [effective])
   const availability = useMemo(() => analyzeAvailability(effective, { failed }), [effective, failed])
+
+  // SRE view: follow sample requests through the live simulation for percentiles and error rate,
+  // and compare them (and the hardware-only availability) with the design's SLOs.
+  const slo = design.slo ?? DEFAULT_SLO
+  const sample = useMemo(() => sampleRequests(effective, sim), [effective, sim])
+  const baseline = useMemo(() => analyzeAvailability(effective).system, [effective])
+  const sloReport = useMemo(() => evaluateSlo(slo, baseline, sample), [slo, baseline, sample])
   const impact = useMemo(() => failureImpact(effective, failed), [effective, failed])
   const spofs = design.nodes
     .filter((n) => isSingleInstance(n) && (impact[n.id] ?? 0) >= SPOF_THRESHOLD)
@@ -112,7 +144,39 @@ export function App() {
     impact,
     spofs,
     toggle: toggleFailed,
-    restoreAll: () => setFailedIds([]),
+    restoreAll: () => {
+      mark('All restored', 'recover')
+      setFailedIds([])
+    },
+  }
+
+  // Record what a monitoring system would scrape, once per clock tick.
+  useEffect(() => {
+    if (!simulating) return
+    const point = metricPoint(clock.t, factor, sim, sample, sloReport.errorBudget, slo.latencyPercentile)
+    setMetrics((list) => [...list.filter((p) => p.t < clock.t), point].slice(-MAX_POINTS))
+  }, [clock.t, simulating])
+
+  // Alerting: rules replayed over the recorded metrics. Pages interrupt with a toast; tickets don't.
+  const [rules, setRules] = useState(() => loadAlertRules(DEFAULT_ALERT_RULES))
+  useEffect(() => saveAlertRules(rules), [rules])
+  const alerts = useMemo(() => evaluateAlerts(rules, metrics, slo.latencyMs), [rules, metrics, slo.latencyMs])
+  const paged = useRef(new Set<string>())
+  useEffect(() => {
+    for (const incident of alerts.incidents) {
+      const key = `${incident.ruleId}:${incident.target}:${incident.firedAt}`
+      const rule = rules.find((r) => r.id === incident.ruleId)
+      if (paged.current.has(key) || rule?.severity !== 'page') continue
+      paged.current.add(key)
+      setNotice(`🔔 Paged: ${rule.name}`)
+    }
+  }, [alerts.incidents])
+
+  const resetTimeline = () => {
+    clock.reset()
+    setMetrics([])
+    setEvents([])
+    paged.current.clear()
   }
 
   const editor = useMemo<Editor>(
@@ -375,43 +439,68 @@ export function App() {
       </header>
       <div className="workspace">
         <Palette onAdd={addAtCenter} />
-        <Canvas
-          ref={canvas}
-          design={design}
-          selection={selection}
-          onSelect={setSelection}
-          editor={editor}
-          notice={notice}
-          notify={setNotice}
-          sim={simulating ? sim : null}
-          failed={failed}
-          spofs={simulating ? spofs : []}
-          overlay={
-            <>
-              {challenge && evaluation && (
-                <ChallengePanel
-                  key={challenge.id}
-                  challenge={challenge}
-                  results={evaluation.results}
-                  passed={evaluation.passed}
-                  onShowSolution={() => replaceAll(challenge.solution())}
-                  onLeave={() => setChallengeId(null)}
-                />
-              )}
-              {simulating && (
-                <MetricsPanel
-                  design={design}
-                  sim={sim}
-                  factor={loadFactor}
-                  onFactor={setLoadFactor}
-                  breaking={breaking}
-                  availability={availability.system}
-                  spofCount={spofs.length}
-                />
-              )}
-            </>
-          }
-        />
+        <div className="center">
+          <Canvas
+            ref={canvas}
+            design={design}
+            selection={selection}
+            onSelect={setSelection}
+            editor={editor}
+            notice={notice}
+            notify={setNotice}
+            sim={simulating ? sim : null}
+            failed={failed}
+            spofs={simulating ? spofs : []}
+            overlay={
+              <>
+                {challenge && evaluation && (
+                  <ChallengePanel
+                    key={challenge.id}
+                    challenge={challenge}
+                    results={evaluation.results}
+                    passed={evaluation.passed}
+                    onShowSolution={() => replaceAll(challenge.solution())}
+                    onLeave={() => setChallengeId(null)}
+                  />
+                )}
+                {simulating && (
+                  <MetricsPanel
+                    design={design}
+                    sim={sim}
+                    factor={loadFactor}
+                    onFactor={setLoadFactor}
+                    breaking={breaking}
+                    availability={availability.system}
+                    spofCount={spofs.length}
+                    sloReport={sloReport}
+                    trafficFactor={factor}
+                  />
+                )}
+              </>
+            }
+          />
+          {simulating && (
+            <Dashboard
+              design={design}
+              metrics={metrics}
+              events={events}
+              clock={clock}
+              onPattern={(pattern) => {
+                clock.setPattern(pattern)
+                mark(TRAFFIC_PATTERNS.find((p) => p.id === pattern)!.label, 'change')
+              }}
+              onReset={resetTimeline}
+              selectedId={selection?.type === 'node' ? selection.id : null}
+              slo={slo}
+              errorBudget={sloReport.errorBudget}
+              rules={rules}
+              onRules={setRules}
+              onResetRules={() => setRules(DEFAULT_ALERT_RULES)}
+              alertStates={alerts.states}
+              incidents={alerts.incidents}
+            />
+          )}
+        </div>
         <Inspector
           design={design}
           selection={selection}
@@ -420,6 +509,9 @@ export function App() {
           sim={sim}
           availability={availability}
           failures={failures}
+          slo={slo}
+          sloReport={sloReport}
+          sample={sample}
           trafficNote={
             challenge
               ? `The challenge fixes traffic at ${challenge.goals.rps.toLocaleString('en-US')} rps (${challenge.goals.readRatio}% reads), so this client's own settings are ignored until you leave it.`

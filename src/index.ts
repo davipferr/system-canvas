@@ -31,6 +31,7 @@ export {
   serializeDesign,
   setEdgeLabel,
   setNotes,
+  setSlo,
   setParam,
   uniqueLabel,
   type Design,
@@ -87,3 +88,41 @@ export {
   type Estimate,
   type EstimateInput,
 } from './estimate'
+
+export {
+  DEFAULT_SLO,
+  evaluateSlo,
+  fractionAtOrBelow,
+  normalizeSlo,
+  P99_FACTOR,
+  percentileOf,
+  sampleRequests,
+  SLO_PERCENTILES,
+  SLO_WINDOW_DAYS,
+  type RequestSample,
+  type Slo,
+  type SloReport,
+} from './sre'
+
+export {
+  CLOCK_START,
+  formatClock,
+  metricPoint,
+  MINUTES_PER_DAY,
+  patternMultiplier,
+  TRAFFIC_PATTERNS,
+  type MetricPoint,
+  type NodeMetrics,
+  type TrafficPattern,
+} from './timeline'
+
+export {
+  ALERT_METRICS,
+  DEFAULT_ALERT_RULES,
+  evaluateAlerts,
+  type AlertIncident,
+  type AlertMetric,
+  type AlertRule,
+  type AlertState,
+  type AlertStatus,
+} from './alerts'

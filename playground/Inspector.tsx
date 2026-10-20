@@ -11,6 +11,9 @@ import {
   uniqueLabel,
   type AvailabilityResult,
   type Design,
+  type RequestSample,
+  type Slo,
+  type SloReport,
   type SimulationResult,
 } from 'system-canvas'
 import { NodeAvailability, SystemAvailability, type FailureState } from './AvailabilityStats'
@@ -18,6 +21,7 @@ import type { Editor } from './Canvas'
 import { ParamField } from './fields'
 import { KindIcon } from './icons'
 import { EdgeLoad, NodeLoad, SystemSummary } from './LoadStats'
+import { SloPanel } from './SloPanel'
 import type { Selection } from './selection'
 
 const edgeLabelPresets = ['reads', 'writes', 'async', 'events', 'https', 'gRPC']
@@ -44,6 +48,9 @@ export function Inspector({
   availability,
   failures,
   trafficNote,
+  slo,
+  sloReport,
+  sample,
 }: {
   design: Design
   selection: Selection
@@ -54,6 +61,9 @@ export function Inspector({
   failures: FailureState
   /** Set while a challenge fixes the traffic, so client settings do not apply. */
   trafficNote?: string
+  slo: Slo
+  sloReport: SloReport
+  sample: RequestSample
 }) {
   const name = (id: string) => getNode(design, id)?.label ?? id
 
@@ -132,6 +142,7 @@ export function Inspector({
           </div>
         </dl>
         <SystemSummary design={design} sim={sim} />
+        <SloPanel design={design} slo={slo} report={sloReport} samples={sample.count} editor={editor} />
         <SystemAvailability design={design} availability={availability} failures={failures} />
         <div className="field">
           <label htmlFor="design-notes">Notes</label>
@@ -193,7 +204,7 @@ export function Inspector({
       <p className="callout">{spec.concept}</p>
 
       {node.kind === 'client' && trafficNote && <p className="callout warn-box small">{trafficNote}</p>}
-      <NodeLoad node={node} sim={sim} />
+      <NodeLoad node={node} sim={sim} sample={sample} />
       <NodeAvailability node={node} availability={availability} failures={failures} sim={sim} />
 
       <div className="settings-head">

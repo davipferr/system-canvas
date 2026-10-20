@@ -3,6 +3,7 @@
 // matter of keeping old values around and keeps the editor easy to test.
 
 import { catalog, clampParam, defaultParams, isComponentKind, type ComponentKind } from './catalog'
+import { normalizeSlo, type Slo } from './sre'
 
 export interface Point {
   x: number
@@ -30,6 +31,8 @@ export interface Design {
   name: string
   /** Free-form notes: requirements, decisions, trade-offs. */
   notes?: string
+  /** Service level objectives; `DEFAULT_SLO` applies when absent. */
+  slo?: Slo
   nodes: DesignNode[]
   edges: DesignEdge[]
 }
@@ -145,6 +148,10 @@ export function renameDesign(design: Design, name: string): Design {
   return { ...design, name }
 }
 
+export function setSlo(design: Design, slo: Slo): Design {
+  return { ...design, slo: normalizeSlo(slo) }
+}
+
 /** Set or (with an empty string) clear the design's notes. */
 export function setNotes(design: Design, notes: string): Design {
   const { notes: _old, ...rest } = design
@@ -190,6 +197,7 @@ export function parseDesign(input: unknown): Design {
 
   let design = createDesign(typeof raw.name === 'string' && raw.name.trim() ? raw.name : undefined)
   if (typeof raw.notes === 'string' && raw.notes.trim()) design.notes = raw.notes
+  if (raw.slo !== undefined) design.slo = normalizeSlo(raw.slo)
 
   raw.nodes.forEach((node, i) => {
     if (!isObject(node)) throw new Error(`Node #${i + 1} is not an object`)

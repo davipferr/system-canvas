@@ -136,9 +136,11 @@ export function NodeAvailability({
       {down ? (
         <p className="callout bad-box">
           <b>Down.</b>{' '}
-          {lost > 0.5
-            ? `Everything that reaches it is lost: ${formatRps(lost)} rps.`
-            : 'No traffic reaches it right now.'}
+          {sim.nodes[node.id].backlog > 0.5
+            ? `Its queue keeps the jobs, but they pile up: +${formatRps(lost)} jobs/s of backlog until it is back.`
+            : lost > 0.5
+              ? `Everything that reaches it is lost: ${formatRps(lost)} rps.`
+              : 'No traffic reaches it right now.'}
         </p>
       ) : (
         <dl className="stats">

@@ -40,8 +40,21 @@ It has no backend: everything runs in the browser, and your work is saved there.
   connections are thicker, and each is labelled with its requests per second.
 - Components show their utilization as a percentage and a bar: green below 70%, orange up to 100%,
   pulsing red when overloaded. Badges show requests being dropped or a queue backlog growing.
-- The **Live traffic** panel has a load multiplier (×0.1 to ×20), response time, availability,
-  drops, backlog, and **"first to break: X at ×1.6"**.
+- The **Live traffic** panel (collapsed to one line until you open it) has a load multiplier
+  (×0.1 to ×20), p99 latency, error budget burn, availability, drops, backlog, and
+  **"first to break: X at ×1.6"**.
+- A **simulated clock** runs at 1 min/s, 10 min/s or 1 h/s, with a **traffic pattern**: steady, a
+  daily cycle (30% at 08:00, peak at 20:00), a 3× spike at half past every hour, or a ramp from
+  0.5× to 2× each hour. The canvas follows the clock live.
+- A **dashboard** below the canvas charts the golden signals over time, Grafana-style: traffic,
+  p50/p99 latency against the SLO line, error rate against the error budget, and the busiest
+  component's saturation against 100%. A second row charts the selected component. One crosshair
+  moves through every chart, and markers show when components failed or recovered, when the
+  pattern changed, and when an alert paged.
+- The dashboard's **Alerts** tab holds alert rules that fire and resolve as the clock runs: error
+  budget burning fast (page) or slowly (ticket), latency over the SLO (page), a component running
+  hot, a queue falling behind, a component down (tickets). Turn rules on and off, tune their
+  thresholds and durations, and read the incident log. A page interrupts you with a toast.
 
 **Failures and availability**
 
@@ -49,6 +62,16 @@ It has no backend: everything runs in the browser, and your work is saved there.
   targets; other components don't.
 - System availability, expected downtime per year, and single points of failure ranked by how many
   requests each would cost, tagged **SPOF** on the canvas.
+
+**SRE: golden signals, SLOs and error budgets**
+
+- Every component shows the **four golden signals**: latency (average and p99), traffic, errors
+  (as its callers see them, including failures further down) and saturation.
+- Each design has **SLOs**, saved with it: an availability target (e.g. 99.9%) and a latency target
+  (e.g. p99 ≤ 300 ms). The inspector checks both, shows p50/p95/p99, and turns the availability
+  target into an **error budget** (99.9% → about 43 minutes of outage per 30 days).
+- It shows how much of that budget ordinary component failures use up, and the live **burn rate**:
+  fail a component and see "burning 186×, the month's budget is gone in 4 h".
 
 **Learning content**
 
@@ -123,6 +146,56 @@ other. Async work is ignored, because users don't wait for it.
 A **single point of failure** is a single-instance component (DNS, CDN and object storage are
 distributed by design) whose failure would cost at least 1% of requests.
 
+### Percentiles, SLOs and error budgets
+
+SLOs are written as percentiles because users feel the slow tail, not the average.
+`sampleRequests(design, sim)` follows 20,000 sample requests through the live simulation, with a
+fixed seed so the numbers only change when the design does:
+
+- Each request is a read or a write, takes cache hits or misses, load-balancer targets and
+  dependencies with the same shares the traffic model computed, and skips async work.
+- At each component it waits a random time from the queueing model. An M/M/1 queue's waiting time
+  is exponential, so per component **p99 = average × ln(100) ≈ 4.6 × average**.
+- It fails if it reaches a component that is down or turning requests away. Every component on
+  the way up counts that failure as one of its errors, as its callers would see it.
+
+A test checks that the sampled requests average to the traffic model's response time.
+
+`evaluateSlo(slo, expectedAvailability, sample)` then reports:
+
+- **Error budget** = 1 − availability target, over a 30-day window. 99.9% allows 0.1% of
+  requests to fail, about 43 minutes of full outage.
+- **Expected budget use**: how much of it ordinary component failures consume
+  (1 − expected availability) ÷ budget. Above 100%, the design can't meet the target even in a
+  good month.
+- **Burn rate** = current error rate ÷ budget. 1× spends the budget exactly over 30 days. 100× spends
+  it in 7 hours. This is the number SRE teams alert on.
+- **Latency SLO**: met when the chosen percentile of successful requests is under the threshold.
+
+### Time and dashboards
+
+`patternMultiplier(pattern, minutes)` gives the traffic multiplier at any simulated moment. The clock
+starts at 08:00 on day 1. At every tick (4 per second), the site simulates the design with that
+moment's traffic (pattern × load multiplier), samples requests, and records a `metricPoint`:
+traffic, p50/p99, error rate, burn rate, the busiest utilization, and each component's own signals.
+The charts keep the last 240 points, which is an hour at 1 min/s or two and a half days at 1 h/s.
+
+### Alerts
+
+`evaluateAlerts(rules, points, sloLatencyMs)` replays the recorded metrics through each rule, the
+way Prometheus does:
+
+- A rule's condition must hold **for** its duration before it fires. Until then it is *pending*,
+  which filters out blips. It resolves as soon as the condition stops holding.
+- System rules (burn rate, latency at the SLO percentile) have one state. Component rules
+  (utilization, queue backlog, down) are evaluated for every component.
+- The defaults follow standard SRE advice: **page on symptoms, ticket on causes**. Only error-budget
+  burn and SLO latency page someone, because they mean users are hurting now. A hot or dead
+  component is a cause: with redundancy, or behind a queue, users may never notice. Fail the
+  Mailer in the sample design and you get two tickets and no page.
+
+Tuned rules are saved in this browser.
+
 ### Estimation and cost
 
 `estimate(input)` is the classic back-of-the-envelope calculation:
@@ -135,7 +208,8 @@ database replica costs about 4× an app server.
 
 ### Limits
 
-- Averages only: no bursts, no tail latency (p99), no retries, timeouts or retry storms.
+- Steady load only: no bursts, retries, timeouts or retry storms. Percentiles assume each
+  component behaves like a simple M/M/1 queue.
 - A request either succeeds or fails. There is no partial degradation, fallback logic or
   circuit breaker.
 - No network distance between components (regions, cross-zone latency), and no data
@@ -155,6 +229,9 @@ These are good next questions to ask about any design the simulator says is fine
 | [`src/simulate.ts`](src/simulate.ts) | Traffic model, failures, load scaling, breaking point |
 | [`src/availability.ts`](src/availability.ts) | Availability, failure impact, single points of failure |
 | [`src/estimate.ts`](src/estimate.ts) | Back-of-the-envelope estimation and unit formatting |
+| [`src/sre.ts`](src/sre.ts) | Sampled requests (percentiles, error rates), SLOs and error budgets |
+| [`src/timeline.ts`](src/timeline.ts) | Traffic patterns, the simulated clock, and the metric points the dashboard plots |
+| [`src/alerts.ts`](src/alerts.ts) | Alert rules and their evaluation over time (pending, firing, resolved) |
 | [`src/cost.ts`](src/cost.ts), [`src/goals.ts`](src/goals.ts) | Monthly cost, and the goal checker behind the challenges |
 | [`playground/`](playground) | The site: React + SVG |
 | [`playground/templates.ts`](playground/templates.ts), [`playground/challenges.ts`](playground/challenges.ts) | Built-in learning content |

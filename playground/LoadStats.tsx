@@ -3,10 +3,12 @@ import {
   getNode,
   MAX_QUEUEING_UTILIZATION,
   monthlyCost,
+  P99_FACTOR,
   totalOf,
   type Behavior,
   type Design,
   type DesignNode,
+  type RequestSample,
   type SimulationResult,
 } from 'system-canvas'
 
@@ -109,7 +111,16 @@ export function SystemSummary({ design, sim }: { design: Design; sim: Simulation
 
 // ---- One component -----------------------------------------------------------------
 
-export function NodeLoad({ node, sim }: { node: DesignNode; sim: SimulationResult }) {
+export function NodeLoad({
+  node,
+  sim,
+  sample,
+}: {
+  node: DesignNode
+  sim: SimulationResult
+  /** Sampled requests, for errors as this component's callers see them. */
+  sample: RequestSample
+}) {
   const stats = sim.nodes[node.id]
   const behavior = behaviorOf(node.kind)
 
@@ -135,8 +146,13 @@ export function NodeLoad({ node, sim }: { node: DesignNode; sim: SimulationResul
   if (stats.failed) {
     return (
       <section className="load">
-        <h3>Under load</h3>
-        <p className="muted small">It is down, so it serves nothing. See Availability below.</p>
+        <h3>Golden signals</h3>
+        <p className="callout bad-box small">
+          {stats.backlog > 0.5
+            ? `Down, but behind a queue: nothing fails, the jobs wait (+${formatRps(stats.backlog)}/s of backlog).`
+            : `Down: every request that reaches it is an error (${formatRps(stats.dropped)} rps).`}{' '}
+          See Availability below.
+        </p>
       </section>
     )
   }
@@ -145,74 +161,78 @@ export function NodeLoad({ node, sim }: { node: DesignNode; sim: SimulationResul
   const base = node.params.latency ?? 0
   const level = loadLevel(stats.utilization)
   const limited = Number.isFinite(stats.capacity.reads)
+  const load = totalOf(stats.load)
+  // Errors as callers see them: turned away here, or failed in something this component called.
+  const seen = sample.nodes[node.id]
+  const errorRate = seen && seen.visits > 0 ? seen.errors / seen.visits : load > 0 ? stats.dropped / load : 0
+  const failing = errorRate >= 0.0005
 
   return (
     <section className="load">
-      <h3>Under load</h3>
+      <h3>Golden signals</h3>
       {idle ? (
         <p className="muted small">No traffic reaches this component yet.</p>
       ) : (
         <>
-          {limited && (
-            <div className={`meter ${level}`} aria-label={`Utilization ${formatPercent(stats.utilization)}`}>
-              <span style={{ width: `${Math.min(100, stats.utilization * 100)}%` }} />
-            </div>
-          )}
-          <dl className="stats">
-            <div className="wide">
-              <dt>Incoming</dt>
-              <dd>{trafficText(stats.load.reads, stats.load.writes)}</dd>
-            </div>
-            {limited && (
-              <div>
-                <dt>Utilization</dt>
-                <dd className={`level ${level}`}>{formatPercent(stats.utilization)}</dd>
-              </div>
-            )}
-            {limited && (
-              <div>
-                <dt>Capacity</dt>
-                <dd>
-                  {stats.capacity.reads === stats.capacity.writes
-                    ? `${formatRps(stats.capacity.reads)} rps`
-                    : `${formatRps(stats.capacity.reads)} r / ${formatRps(stats.capacity.writes)} w`}
-                </dd>
-              </div>
-            )}
-            <div>
-              <dt>Latency with queueing</dt>
+          <dl className="signals">
+            <div className="signal">
+              <dt>Latency</dt>
               <dd>
                 {formatMs(stats.latency)}
                 {stats.utilization >= MAX_QUEUEING_UTILIZATION && '+'}
               </dd>
+              <p>
+                p99 {formatMs(stats.latency * P99_FACTOR)} · {formatMs(stats.responseTime)} with the calls it makes
+              </p>
             </div>
-            <div>
-              <dt>Response time</dt>
-              <dd>{formatMs(stats.responseTime)}</dd>
+            <div className="signal">
+              <dt>Traffic</dt>
+              <dd>{formatRps(load)} rps</dd>
+              <p>{trafficText(stats.load.reads, stats.load.writes)}</p>
             </div>
-            {behavior === 'cache' && (
-              <div className="wide">
-                <dt>Answered from cache</dt>
-                <dd>{formatRps(stats.absorbed)} reads per second</dd>
-              </div>
-            )}
-            {stats.dropped > 0.5 && (
-              <div className="wide bad-box">
-                <dt>Dropped</dt>
-                <dd>{formatRps(stats.dropped)} rps over capacity</dd>
-              </div>
-            )}
-            {stats.backlog > 0.5 && (
-              <div className="wide warn-box">
-                <dt>Backlog growing</dt>
-                <dd>{formatRps(stats.backlog)} jobs per second pile up in the queue</dd>
-              </div>
-            )}
+            <div className={failing ? 'signal bad-box' : 'signal'}>
+              <dt>Errors</dt>
+              <dd>{failing ? `${(errorRate * 100).toFixed(1)}%` : 'none'}</dd>
+              <p>
+                {!failing
+                  ? 'every request succeeds'
+                  : stats.dropped > 0.5
+                    ? `${formatRps(stats.dropped)} rps turned away here`
+                    : 'failing further down, in something it calls'}
+              </p>
+            </div>
+            <div className={stats.backlog > 0.5 ? 'signal warn-box' : 'signal'}>
+              <dt>Saturation</dt>
+              <dd className={limited ? `level ${level}` : undefined}>
+                {limited ? formatPercent(stats.utilization) : '—'}
+              </dd>
+              {limited ? (
+                <>
+                  <div className={`meter ${level}`} aria-label={`Utilization ${formatPercent(stats.utilization)}`}>
+                    <span style={{ width: `${Math.min(100, stats.utilization * 100)}%` }} />
+                  </div>
+                  <p>
+                    of{' '}
+                    {stats.capacity.reads === stats.capacity.writes
+                      ? `${formatRps(stats.capacity.reads)} rps`
+                      : `${formatRps(stats.capacity.reads)} reads / ${formatRps(stats.capacity.writes)} writes`}
+                    {stats.backlog > 0.5 && `, backlog +${formatRps(stats.backlog)}/s`}
+                  </p>
+                </>
+              ) : (
+                <p>no capacity limit</p>
+              )}
+            </div>
           </dl>
+          {behavior === 'cache' && (
+            <p className="small">
+              Answers <b>{formatRps(stats.absorbed)} reads/s</b> from cache.
+            </p>
+          )}
           {limited && base > 0 && (
             <p className="muted small">
               Queueing: {formatMs(base)} base ÷ (1 − {formatPercent(Math.min(stats.utilization, MAX_QUEUEING_UTILIZATION))}{' '}
-              busy) = {formatMs(stats.latency)}. Response time adds the calls it waits on.
+              busy) = {formatMs(stats.latency)} on average. Waits are exponential, so p99 is ln(100) ≈ 4.6× that.
             </p>
           )}
         </>

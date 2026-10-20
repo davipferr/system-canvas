@@ -1,6 +1,7 @@
-import { getNode, type Design, type SimulationResult } from 'system-canvas'
+import { getNode, type Design, type SimulationResult, type SloReport } from 'system-canvas'
 import { formatAvailability } from './AvailabilityStats'
 import { formatMs, formatPercent, formatRps, loadLevel } from './LoadStats'
+import { formatBurn } from './SloPanel'
 
 const MIN_FACTOR = 0.1
 const MAX_FACTOR = 20
@@ -24,6 +25,8 @@ export function MetricsPanel({
   breaking,
   availability,
   spofCount,
+  sloReport,
+  trafficFactor,
 }: {
   design: Design
   /** Simulation at the current multiplier. */
@@ -35,13 +38,17 @@ export function MetricsPanel({
   /** Fraction of requests that succeed, with current failures. */
   availability: number
   spofCount: number
+  sloReport: SloReport
+  /** Everything scaling the design's own traffic right now (multiplier × clock pattern). */
+  trafficFactor: number
 }) {
   const name = (id: string) => getNode(design, id)?.label ?? id
-  const baseRps = factor > 0 ? sim.totalRps / factor : 0
+  const baseRps = trafficFactor > 0 ? sim.totalRps / trafficFactor : 0
   const bottleneck = sim.bottleneck ? sim.nodes[sim.bottleneck] : null
 
   return (
-    <details className="metrics" open>
+    // Starts collapsed: its header still shows rps and latency, and the dashboard below has the trends.
+    <details className="metrics">
       <summary>
         <span className="live-dot" aria-hidden="true" />
         Live traffic
@@ -78,9 +85,13 @@ export function MetricsPanel({
         </div>
 
         <dl className="stats">
-          <div>
-            <dt>Avg response</dt>
-            <dd>{formatMs(sim.responseTime)}</dd>
+          <div className={sloReport.latency.met ? undefined : 'bad-box'}>
+            <dt>p99 latency</dt>
+            <dd>{formatMs(sloReport.latency.p99)}</dd>
+          </div>
+          <div className={sloReport.burnRate > 1 ? 'bad-box' : undefined}>
+            <dt>Error budget burn</dt>
+            <dd>{formatBurn(sloReport.burnRate)}</dd>
           </div>
           <div>
             <dt>Busiest</dt>
@@ -118,7 +129,7 @@ export function MetricsPanel({
 
         {breaking && (
           <p className="small">
-            {breaking.factor > factor ? (
+            {breaking.factor > trafficFactor ? (
               <>
                 First to break: <b>{name(breaking.nodeId)}</b> at {formatFactor(breaking.factor)} (
                 {formatRps(baseRps * breaking.factor)} rps).

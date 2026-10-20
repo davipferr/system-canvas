@@ -1,4 +1,4 @@
-import { parseDesign, serializeDesign, type Design } from 'system-canvas'
+import { parseDesign, serializeDesign, type AlertRule, type Design } from 'system-canvas'
 
 const KEY = 'system-canvas:design'
 
@@ -95,5 +95,41 @@ export function saveCompleted(ids: ReadonlySet<string>) {
     localStorage.setItem(COMPLETED_KEY, JSON.stringify([...ids]))
   } catch {
     // Storage blocked: completion badges last until the tab closes.
+  }
+}
+
+// ---- Alert rules -------------------------------------------------------------------
+
+const ALERT_RULES_KEY = 'system-canvas:alert-rules'
+
+/**
+ * The viewer's tuned alert rules, laid over the defaults by id: new default rules still appear,
+ * and only known fields with the right types are taken from storage.
+ */
+export function loadAlertRules(defaults: AlertRule[]): AlertRule[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ALERT_RULES_KEY) ?? '[]')
+    if (!Array.isArray(saved)) return defaults
+    return defaults.map((rule) => {
+      const s = saved.find((x) => x && x.id === rule.id)
+      if (!s) return rule
+      return {
+        ...rule,
+        enabled: typeof s.enabled === 'boolean' ? s.enabled : rule.enabled,
+        threshold: typeof s.threshold === 'number' && s.threshold >= 0 ? s.threshold : rule.threshold,
+        forMinutes: typeof s.forMinutes === 'number' && s.forMinutes >= 0 ? s.forMinutes : rule.forMinutes,
+      }
+    })
+  } catch {
+    return defaults
+  }
+}
+
+export function saveAlertRules(rules: AlertRule[]) {
+  try {
+    const tuned = rules.map(({ id, enabled, threshold, forMinutes }) => ({ id, enabled, threshold, forMinutes }))
+    localStorage.setItem(ALERT_RULES_KEY, JSON.stringify(tuned))
+  } catch {
+    // Storage blocked: the rules last until the tab closes.
   }
 }
